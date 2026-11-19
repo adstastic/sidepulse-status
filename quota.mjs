@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
-import { Alert, findSidePulseVolume, present } from './device.mjs';
+import { Alert, diskMinPercent, findSidePulseVolume, present } from './device.mjs';
 import { readRexAttention } from './rex-attention.mjs';
 
 const home = homedir();
@@ -105,9 +105,11 @@ async function readBatteryPercent() {
 
 export async function readDiskPercent(read = statfs) {
   try {
-    const { bavail, blocks } = await read('/System/Volumes/Data');
-    const percent = 100 * bavail / blocks;
-    return Number.isFinite(percent) && percent >= 0 && percent <= 100 ? percent : null;
+    const { bavail, bsize } = await read('/System/Volumes/Data');
+    if (!Number.isFinite(bavail) || bavail < 0 || !Number.isInteger(bsize) || bsize <= 0) return null;
+    const fullBarBytes = 100_000_000_000;
+    const fillPercent = (bavail * bsize / fullBarBytes) * 100;
+    return Math.max(diskMinPercent, Math.min(100, fillPercent));
   } catch {
     return null;
   }

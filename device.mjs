@@ -6,10 +6,11 @@ import { promisify } from 'node:util';
 
 const defaultVolumes = ['/Volumes/SidePulse', '/Volumes/SidePulsePro'];
 const segments = 8;
+export const diskMinPercent = 100 / segments;
 const gauges = [
   { key: 'claude', rgb: [0xd9, 0x77, 0x57] },
   { key: 'codex', rgb: [0x39, 0x7d, 0xff] },
-  { key: 'disk', rgb: [0x35, 0xd0, 0x5a] },
+  { key: 'disk', rgb: [0xb8, 0x89, 0xff] },
 ];
 const quotaRise = ' 230ms';
 const programLimit = 512;
@@ -70,7 +71,8 @@ export function createPresenter(findTarget = findSidePulseVolume, now = () => pe
   return async (readings, alert = Alert.NONE) => {
     const program = render(readings, alert);
     const { claude, codex, disk } = readings;
-    const key = alert === Alert.NONE ? JSON.stringify([claude, codex, disk == null ? null : Math.round(disk)]) : alert;
+    const diskKey = disk == null ? null : [Math.round(disk), disk === diskMinPercent || disk === 100];
+    const key = alert === Alert.NONE ? JSON.stringify([claude, codex, diskKey]) : alert;
     try {
       const target = await findTarget();
       if (!target) throw new Error('No usable SidePulse volume');

@@ -4,12 +4,13 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createPresenter, findSidePulseVolume, mountedVolume, render, writeLED } from './device.mjs';
+import { readDiskPercent } from './quota.mjs';
 
 const wasm = new WebAssembly.Module(await readFile(new URL('./sdled.wasm', import.meta.url)));
 const dark = '000000';
 const claude = 'd97757';
 const codex = '397dff';
-const disk = '35d05a';
+const disk = 'b889ff';
 const black = Array(8).fill(dark);
 const unavailable = { claude: null, codex: null };
 
@@ -50,7 +51,7 @@ test('full gauges fit the format limits and rise from LED 0 with overlapping ram
   assert.deepEqual(frame(4650), Array(8).fill(claude));
 });
 
-test('three full gauges fit the format and play orange, blue, green in order', () => {
+test('three full gauges fit the format and play orange, blue, lavender in order', () => {
   const frame = playback(render({ claude: 100, codex: 100, disk: 100 }));
   const turns = [];
   for (let ms = 0; ms < 11_000; ms += 10) {
@@ -63,8 +64,8 @@ test('three full gauges fit the format and play orange, blue, green in order', (
   assert.deepEqual(turns.slice(0, 4), [claude, codex, disk, claude]);
 });
 
-test('disk plays third and shows a fractional fill with the unused LEDs dark', () => {
-  const frame = playback(render({ claude: 50, codex: 50, disk: 2.27 }));
+test('the third gauge fades in one full lavender LED at low disk space', () => {
+  const frame = playback(render({ claude: 50, codex: 50, disk: 12.5 }));
   assert.deepEqual(frame(500), [...Array(4).fill(claude), ...black.slice(4)]);
   assert.deepEqual(frame(2200), [...Array(4).fill(codex), ...black.slice(4)]);
   let reachedDisk = false;
@@ -72,20 +73,28 @@ test('disk plays third and shows a fractional fill with the unused LEDs dark', (
   for (let ms = 2210; ms < 5200; ms += 10) {
     const pixels = frame(ms);
     const [red, green, blue] = Buffer.from(pixels[0], 'hex');
-    if (green <= red || green <= blue) continue;
+    if (!(blue > red && red > green)) continue;
     assert.deepEqual(pixels.slice(1), black.slice(1));
-    if (!reachedDisk && green < 0x26) fadedIn = true;
-    if (pixels[0] === '0a2610') reachedDisk = true;
+    if (!reachedDisk && pixels[0] !== disk) fadedIn = true;
+    if (pixels[0] === disk) reachedDisk = true;
   }
   assert.ok(fadedIn && reachedDisk);
-  assert.deepEqual(playback(render({ ...unavailable, disk: 56.25 }))(500),
-    [disk, disk, disk, disk, '1b682d', dark, dark, dark]);
 });
 
-test('unavailable disk skips its turn and zero free space displays no green', () => {
+test('disk plays one to eight lavender LEDs across the last 100 GB', async () => {
+  for (const [bytes, lit, partial = dark] of [[0, 1], [1000, 1], [10e9, 1], [50e9, 4],
+    [56.25e9, 4, '5c4580'], [100e9, 8], [120e9, 8]]) {
+    const fill = await readDiskPercent(async () => ({ bavail: bytes / 1000, bsize: 1000 }));
+    const expected = Array(8).fill(dark).fill(disk, 0, lit);
+    if (lit < 8) expected[lit] = partial;
+    assert.deepEqual(playback(render({ ...unavailable, disk: fill }))(500), expected, `${bytes} bytes`);
+  }
+});
+
+test('unavailable disk skips its turn', () => {
   const reading = { claude: 100, codex: 100 };
   assert.equal(render({ ...reading, disk: null }), render(reading));
-  assert.deepEqual(playback(render({ claude: null, codex: null, disk: 0 }))(1000), black);
+  assert.deepEqual(playback(render({ ...unavailable, disk: null }))(500), black);
 });
 
 test('normal WASM playback repeats orange once, then blue once', () => {
@@ -224,23 +233,35 @@ test('deduplicates quota and alert programs and touches keepalive at most once p
 test('disk changes restart playback only when the rounded percentage changes', async t => {
   const { dir, mounted, led } = await fixture(t);
   const show = createPresenter(async () => ({ path: dir, mounted, led: await lstat(led) }));
-  const reading = { claude: 50, codex: 50, disk: 2.27 };
+  const reading = { claude: 50, codex: 50, disk: 25.27 };
   await writeFile(led, 'off\n');
   await show(reading);
   const program = await readFile(led, 'utf8');
   const earlier = new Date('2000-01-01T00:00:00Z');
   await utimes(led, earlier, earlier);
 
-  await show({ ...reading, disk: 2.48 });
+  await show({ ...reading, disk: 25.48 });
   assert.equal((await lstat(led)).mtimeMs, +earlier);
   assert.equal(await readFile(led, 'utf8'), program);
 
-  await show({ ...reading, disk: 2.72 });
+  await show({ ...reading, disk: 25.72 });
   const updated = await readFile(led, 'utf8');
   assert.notEqual(updated, program);
   assert.ok((await lstat(led)).mtimeMs > +earlier);
   await show({ ...reading, disk: null });
   assert.notEqual(await readFile(led, 'utf8'), updated);
+});
+
+test('disk enters its one-dot and full-bar states even within the same rounded percent', async t => {
+  const { dir, mounted, led } = await fixture(t);
+  await writeFile(led, 'off\n');
+  const show = createPresenter(async () => ({ path: dir, mounted, led: await lstat(led) }));
+  for (const [before, after, lit] of [[12.6, 12.5, 1], [99.6, 100, 8]]) {
+    await show({ ...unavailable, disk: before });
+    await show({ ...unavailable, disk: after });
+    const frame = playback(await readFile(led, 'utf8'));
+    assert.deepEqual(frame(500), [...Array(lit).fill(disk), ...black.slice(lit)]);
+  }
 });
 
 test('reapplies quota after mount failure and when a different mount appears', async t => {

@@ -7,19 +7,23 @@ import { setImmediate } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { createQuotaPoll, parseBatteryPercent, readDiskPercent, selectAlert, selectCodexQuota, selectQuota } from './quota.mjs';
 
-test('reads available blocks on the macOS data volume without rounding', async () => {
-  const read = async path => {
-    assert.equal(path, '/System/Volumes/Data');
-    return { blocks: 10_000, bavail: 227, bfree: 500 };
-  };
-  assert.equal(await readDiskPercent(read), 2.27);
-  assert.equal(await readDiskPercent(async () => ({ blocks: 10_000, bavail: 0 })), 0);
+test('reads available bytes on the macOS data volume as fill on a 100 GB scale', async () => {
+  for (const [bavail, expected] of [[0, 12.5], [1, 12.5], [19_531_250, 12.5],
+    [97_656_250, 50], [195_312_500, 100], [390_625_000, 100]]) {
+    assert.equal(await readDiskPercent(async path => {
+      assert.equal(path, '/System/Volumes/Data');
+      return { bavail, bsize: 512, bfree: 500_000_000, blocks: 1_000_000_000 };
+    }), expected, `${bavail} available blocks`);
+  }
 });
 
 test('unreadable or invalid disk stats are unavailable', async () => {
   assert.equal(await readDiskPercent(async () => { throw new Error('Volume unavailable'); }), null);
-  for (const stats of [{ blocks: 0, bavail: 0 }, { blocks: 100, bavail: 101 }, { blocks: 100, bavail: -1 }]) {
-    assert.equal(await readDiskPercent(async () => stats), null);
+  for (const bavail of [undefined, null, '1', NaN, Infinity, -1]) {
+    assert.equal(await readDiskPercent(async () => ({ bavail, bsize: 512 })), null, String(bavail));
+  }
+  for (const bsize of [undefined, null, '512', NaN, Infinity, -1, 0, 0.5]) {
+    assert.equal(await readDiskPercent(async () => ({ bavail: 1, bsize })), null, String(bsize));
   }
 });
 

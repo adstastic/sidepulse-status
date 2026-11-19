@@ -6,9 +6,11 @@ Show weekly Claude and Codex quota remaining, free disk space, and Rex approval 
 | --- | --- |
 | Orange bar | Claude weekly quota remaining |
 | Blue bar | Codex weekly quota remaining |
-| Green bar | Available space on the Mac’s data volume |
+| Lavender bar | Available space on the Mac's data volume, on a 100 GB scale |
 | Soft yellow pulse | Rex reports a permission prompt or a wait for Touch ID |
 | Red double flash | Battery below 10% |
+
+The disk bar uses decimal GB. It shows one full LED from 0 to 12.5 GB, four at 50 GB, and all eight at 100 GB or more.
 
 The bars take turns. Yellow takes priority over the bars. Red takes priority over everything. Standalone macOS Touch ID dialogs are not detected.
 
@@ -25,7 +27,9 @@ node quota.mjs --check
 node quota.mjs
 ```
 
-`--check` reports available readings without writing to the card. The second command runs the display in the foreground. Press Ctrl-C to stop it.
+`--check` reports available readings without writing to the card. The `disk` field is the bar's fill percentage (12.5 to 100), not the percentage of the volume that is free. If disk stats are unavailable, `disk` is `null`.
+
+The second command runs the display in the foreground. Press Ctrl-C to stop it.
 
 Disk and battery work without an account. Add only the sources you want:
 
